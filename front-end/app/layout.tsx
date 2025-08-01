@@ -35,7 +35,7 @@ export default function RootLayout({
             {children}
           </main>
 
-          <footer className="bg-[#2C1810] text-white py-4 text-center">
+          <footer className="bg-[#1A237E] text-white py-4 text-center">
             <p>&copy; {new Date().getFullYear()} CodeCare AI. All rights reserved.</p>
           </footer>
         </div>

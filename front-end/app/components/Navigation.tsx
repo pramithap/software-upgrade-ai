@@ -1,6 +1,6 @@
 export default function Navigation() {
   return (
-    <nav className="bg-gradient-to-r from-[#2C1810] via-[#3E2723] to-[#2C1810] text-white shadow-lg">
+    <nav className="bg-gradient-to-r from-[#1A237E] via-[#283593] to-[#1A237E] text-white shadow-lg">
       <div className="container mx-auto px-6 py-4">
         <div className="flex justify-between items-center">
           {/* Logo Section */}
