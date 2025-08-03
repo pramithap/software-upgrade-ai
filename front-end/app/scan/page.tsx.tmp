@@ -20,40 +20,11 @@ export default function ScanPage() {
     setRepositories(newRepositories);
   };
 
-  const [isLoading, setIsLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
-  const handleSubmit = async (e: React.FormEvent) => {
+  const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    setIsLoading(true);
-    setError(null);
-
-    try {
-      const response = await fetch('http://0.0.0.0:3001/api/scan', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          repositories,
-          scanType,
-        }),
-      });
-
-      if (!response.ok) {
-        throw new Error(`HTTP error! status: ${response.status}`);
-      }
-
-      const data = await response.json();
-      // Navigate to results page with the scan data
-      console.log('Scan results:', data);
-      // TODO: Implement navigation to results page
-    } catch (error) {
-      console.log('Scan error:', error);
-      setError((error as Error).message);
-    } finally {
-      setIsLoading(false);
-    }
+    // Handle form submission here
+    console.log('Repositories:', repositories);
+    console.log('Scan Type:', scanType);
   };
 
   return (
@@ -168,22 +139,12 @@ export default function ScanPage() {
               </div>
             </div>
 
-            {/* Error Message */}
-            {error && (
-              <div className="bg-red-50 text-red-500 p-4 rounded-md">
-                {error}
-              </div>
-            )}
-
             {/* Submit Button */}
             <button
               type="submit"
-              disabled={isLoading}
-              className={`w-full bg-[#1A237E] text-white px-8 py-3 rounded-md text-lg font-semibold transition-colors ${
-                isLoading ? 'opacity-50 cursor-not-allowed' : 'hover:bg-[#0D1453]'
-              }`}
+              className="w-full bg-[#1A237E] text-white px-8 py-3 rounded-md text-lg font-semibold hover:bg-[#0D1453] transition-colors"
             >
-              {isLoading ? 'Scanning...' : 'Start Scan'}
+              Start Scan
             </button>
           </form>
         </div>
