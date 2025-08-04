@@ -1,0 +1,1057 @@
+'use client';
+
+import { FormEvent, useState, useCallback, useEffect } from 'react';
+
+// Type definitions
+interface Dependency {
+  name: string;
+  currentVersion: string;
+  latestVersion: string;
+  updateAvailable: boolean;
+}
+
+interface ScanResult {
+  repository: string;
+  data: {
+    dependencies: Dependency[];
+    status: 'pending' | 'scanning' | 'completed' | 'error';
+    error?: string;
+  };
+}
+
+interface ServerEvent {
+  type: 'progress' | 'result' | 'complete';
+  data?: any;
+  progress?: number;
+}
+
+type ScanType = 'single' | 'multiple';
+
+interface FormState {
+  repositories: string[];
+  scanType: ScanType;
+  scanning: boolean;
+  error: string;
+  progress: number;
+  results: ScanResult[];
+}
+
+const initialState: FormState = {
+  repositories: [''],
+  scanType: 'single',
+  scanning: false,
+  error: '',
+  progress: 0,
+  results: []
+};
+
+interface FormState {
+  repositories: string[];
+  scanType: ScanType;
+  scanning: boolean;
+  error: string;
+  progress: number;
+  results: ScanResult[];
+}
+
+// Initial state
+const initialState: FormState = {
+  repositories: [''],
+  scanType: 'single',
+  scanning: false,
+  error: '',
+  progress: 0,
+  results: []
+};
+
+export default function ScanPage() {
+  const [state, setState] = useState<FormState>(initialState);
+  const [eventSource, setEventSource] = useState<EventSource | null>(null);
+
+  const closeEventSource = useCallback(() => {
+    if (eventSource) {
+      eventSource.close();
+      setEventSource(null);
+    }
+  }, [eventSource]);
+
+  useEffect(() => {
+    return () => closeEventSource();
+  }, [closeEventSource]);
+
+  const handleRepositoryChange = useCallback((index: number, value: string) => {
+    setState(prev => ({
+      ...prev,
+      repositories: prev.repositories.map((repo, i) =>
+        i === index ? value : repo
+      )
+    }));
+  }, []);
+
+  const handleAddRepository = useCallback(() => {
+    setState(prev => ({
+      ...prev,
+      repositories: [...prev.repositories, '']
+    }));
+  }, []);
+
+  const handleRemoveRepository = useCallback((index: number) => {
+    setState(prev => ({
+      ...prev,
+      repositories: prev.repositories.filter((_, i) => i !== index)
+    }));
+  }, []);
+
+  const handleScanTypeChange = useCallback((type: ScanType) => {
+    setState(prev => ({
+      ...prev,
+      scanType: type
+    }));
+  }, []);
+
+  const getApiUrl = useCallback(() => {
+    const baseUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001';
+    return `${baseUrl}/api/${state.scanType === 'single' ? 'scan' : 'scan/multiple'}`;
+  }, [state.scanType]);
+
+  const handleSubmit = useCallback(async (e: FormEvent) => {
+    e.preventDefault();
+
+    if (state.repositories.some(repo => !repo.trim())) {
+      setState(prev => ({
+        ...prev,
+        error: 'Please fill in all repository fields'
+      }));
+      return;
+    }
+
+    setState(prev => ({
+      ...prev,
+      error: '',
+      scanning: true,
+      progress: 0,
+      results: []
+    }));
+
+    try {
+      closeEventSource();
+      
+      const encodedRepos = state.repositories
+        .map(repo => encodeURIComponent(repo))
+        .join(',');
+      const url = `${getApiUrl()}?repositories=${encodedRepos}`;
+      const newEventSource = new EventSource(url);
+      setEventSource(newEventSource);
+
+      newEventSource.onmessage = (event: MessageEvent) => {
+        const data: ServerEvent = JSON.parse(event.data);
+        
+        switch (data.type) {
+          case 'progress':
+            setState(prev => ({
+              ...prev,
+              progress: data.progress || 0
+            }));
+            break;
+
+          case 'result':
+            setState(prev => ({
+              ...prev,
+              results: [...prev.results, data as ScanResult]
+            }));
+            break;
+
+          case 'complete':
+            setState(prev => ({
+              ...prev,
+              scanning: false
+            }));
+            closeEventSource();
+            break;
+
+          default:
+            console.warn('Unknown event type:', data.type);
+        }
+      };
+
+      newEventSource.onerror = () => {
+        setState(prev => ({
+          ...prev,
+          error: 'Lost connection to progress updates',
+          scanning: false
+        }));
+        closeEventSource();
+      };
+    } catch (err) {
+      console.error('Error starting scan:', err);
+      setState(prev => ({
+        ...prev,
+        error: 'Failed to start scan',
+        scanning: false
+      }));
+      closeEventSource();
+    }
+  }, [state.repositories, state.scanType, getApiUrl, closeEventSource]);
+
+  return (
+    <div className="p-4">
+      <h1 className="text-2xl font-bold mb-4">Repository Scanner</h1>
+      
+      {state.error && (
+        <div className="bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded mb-4">
+          {state.error}
+        </div>
+      )}
+
+      <form onSubmit={handleSubmit} className="space-y-4">
+        <div className="space-y-2">
+          <label className="block text-sm font-medium">Repositories:</label>
+          {state.repositories.map((repo, index) => (
+            <div key={index} className="flex gap-2">
+              <input
+                type="text"
+                value={repo}
+                onChange={(e) => handleRepositoryChange(index, e.target.value)}
+                placeholder="Enter repository URL"
+                className="flex-1 p-2 border rounded"
+                disabled={state.scanning}
+              />
+              {state.repositories.length > 1 && (
+                <button
+                  type="button"
+                  onClick={() => handleRemoveRepository(index)}
+                  className="px-3 py-2 text-red-600 hover:bg-red-100 rounded"
+                  disabled={state.scanning}
+                >
+                  Remove
+                </button>
+              )}
+            </div>
+          ))}
+          
+          <button
+            type="button"
+            onClick={handleAddRepository}
+            className="text-blue-600 hover:text-blue-800"
+            disabled={state.scanning}
+          >
+            + Add Repository
+          </button>
+        </div>
+
+        <div className="space-y-2">
+          <label className="block text-sm font-medium">Scan Type:</label>
+          <div className="flex gap-4">
+            <label className="inline-flex items-center">
+              <input
+                type="radio"
+                value="single"
+                checked={state.scanType === 'single'}
+                onChange={() => handleScanTypeChange('single')}
+                disabled={state.scanning}
+                className="mr-2"
+              />
+              Single Repository
+            </label>
+            <label className="inline-flex items-center">
+              <input
+                type="radio"
+                value="multiple"
+                checked={state.scanType === 'multiple'}
+                onChange={() => handleScanTypeChange('multiple')}
+                disabled={state.scanning}
+                className="mr-2"
+              />
+              Multiple Repositories
+            </label>
+          </div>
+        </div>
+
+        <button
+          type="submit"
+          disabled={state.scanning || state.repositories.length === 0}
+          className="w-full bg-blue-600 text-white py-2 px-4 rounded hover:bg-blue-700 disabled:bg-gray-400"
+        >
+          {state.scanning ? 'Scanning...' : 'Start Scan'}
+        </button>
+      </form>
+
+      {state.scanning && (
+        <div className="mt-4">
+          <div className="w-full bg-gray-200 rounded">
+            <div
+              className="bg-blue-600 text-xs font-medium text-blue-100 text-center p-0.5 leading-none rounded"
+              style={{ width: `${state.progress}%` }}
+            >
+              {state.progress}%
+            </div>
+          </div>
+        </div>
+      )}
+
+      {state.results.length > 0 && (
+        <div className="mt-8">
+          <h2 className="text-xl font-bold mb-4">Results</h2>
+          <div className="space-y-4">
+            {state.results.map((result, index) => (
+              <div key={index} className="p-4 border rounded">
+                <h3 className="font-bold mb-2">{result.repository}</h3>
+                <pre className="bg-gray-100 p-4 rounded overflow-x-auto">
+                  {JSON.stringify(result.data, null, 2)}
+                </pre>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+
+  // Input handlers
+  const handleRepositoryChange = useCallback((index: number, value: string) => {
+    setState(prev => ({
+      ...prev,
+      repositories: prev.repositories.map((repo, i) =>
+        i === index ? value : repo
+      )
+    }));
+  }, []);
+
+  const handleAddRepository = useCallback(() => {
+    setState(prev => ({
+      ...prev,
+      repositories: [...prev.repositories, '']
+    }));
+  }, []);
+
+  const handleRemoveRepository = useCallback((index: number) => {
+    setState(prev => ({
+      ...prev,
+      repositories: prev.repositories.filter((_, i) => i !== index)
+    }));
+  }, []);
+
+  const handleScanTypeChange = useCallback((type: ScanType) => {
+    setState(prev => ({
+      ...prev,
+      scanType: type
+    }));
+  }, []);
+
+  // Get API URL based on scan type
+  const getApiUrl = useCallback(() => {
+    const baseUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001';
+    return `${baseUrl}/api/${state.scanType === 'single' ? 'scan' : 'scan/multiple'}`;
+  }, [state.scanType]);
+
+  // Handle form submission
+  const handleSubmit = useCallback(async (e: FormEvent) => {
+    e.preventDefault();
+
+    // Validate repositories
+    if (state.repositories.some(repo => !repo.trim())) {
+      setState(prev => ({
+        ...prev,
+        error: 'Please fill in all repository fields'
+      }));
+      return;
+    }
+
+    // Reset state
+    setState(prev => ({
+      ...prev,
+      error: '',
+      scanning: true,
+      progress: 0,
+      results: []
+    }));
+
+    try {
+      // Set up event source
+      closeEventSource();
+      
+      const encodedRepos = state.repositories
+        .map(repo => encodeURIComponent(repo))
+        .join(',');
+      const url = `${getApiUrl()}?repositories=${encodedRepos}`;
+      const newEventSource = new EventSource(url);
+      setEventSource(newEventSource);
+
+      // Handle server events
+      newEventSource.onmessage = (event: MessageEvent) => {
+        const data: ServerEvent = JSON.parse(event.data);
+        
+        switch (data.type) {
+          case 'progress':
+            setState(prev => ({
+              ...prev,
+              progress: data.progress || 0
+            }));
+            break;
+
+          case 'result':
+            setState(prev => ({
+              ...prev,
+              results: [...prev.results, data as ScanResult]
+            }));
+            break;
+
+          case 'complete':
+            setState(prev => ({
+              ...prev,
+              scanning: false
+            }));
+            closeEventSource();
+            break;
+
+          default:
+            console.warn('Unknown event type:', data.type);
+        }
+      };
+
+      newEventSource.onerror = () => {
+        setState(prev => ({
+          ...prev,
+          error: 'Lost connection to progress updates',
+          scanning: false
+        }));
+        closeEventSource();
+      };
+    } catch (err) {
+      console.error('Error starting scan:', err);
+      setState(prev => ({
+        ...prev,
+        error: 'Failed to start scan',
+        scanning: false
+      }));
+      closeEventSource();
+    }
+  }, [state.repositories, state.scanType, getApiUrl, closeEventSource]);
+
+  return (
+    <div className="p-4">
+      <h1 className="text-2xl font-bold mb-4">Repository Scanner</h1>
+      
+      {/* Error message */}
+      {state.error && (
+        <div className="bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded mb-4">
+          {state.error}
+        </div>
+      )}
+
+      <form onSubmit={handleSubmit} className="space-y-4">
+        {/* Repository inputs */}
+        <div className="space-y-2">
+          <label className="block text-sm font-medium">Repositories:</label>
+          {state.repositories.map((repo, index) => (
+            <div key={index} className="flex gap-2">
+              <input
+                type="text"
+                value={repo}
+                onChange={(e) => handleRepositoryChange(index, e.target.value)}
+                placeholder="Enter repository URL"
+                className="flex-1 p-2 border rounded"
+                disabled={state.scanning}
+              />
+              {state.repositories.length > 1 && (
+                <button
+                  type="button"
+                  onClick={() => handleRemoveRepository(index)}
+                  className="px-3 py-2 text-red-600 hover:bg-red-100 rounded"
+                  disabled={state.scanning}
+                >
+                  Remove
+                </button>
+              )}
+            </div>
+          ))}
+          
+          <button
+            type="button"
+            onClick={handleAddRepository}
+            className="text-blue-600 hover:text-blue-800"
+            disabled={state.scanning}
+          >
+            + Add Repository
+          </button>
+        </div>
+
+        {/* Scan type selection */}
+        <div className="space-y-2">
+          <label className="block text-sm font-medium">Scan Type:</label>
+          <div className="flex gap-4">
+            <label className="inline-flex items-center">
+              <input
+                type="radio"
+                value="single"
+                checked={state.scanType === 'single'}
+                onChange={() => handleScanTypeChange('single')}
+                disabled={state.scanning}
+                className="mr-2"
+              />
+              Single Repository
+            </label>
+            <label className="inline-flex items-center">
+              <input
+                type="radio"
+                value="multiple"
+                checked={state.scanType === 'multiple'}
+                onChange={() => handleScanTypeChange('multiple')}
+                disabled={state.scanning}
+                className="mr-2"
+              />
+              Multiple Repositories
+            </label>
+          </div>
+        </div>
+
+        {/* Submit button */}
+        <button
+          type="submit"
+          disabled={state.scanning || state.repositories.length === 0}
+          className="w-full bg-blue-600 text-white py-2 px-4 rounded hover:bg-blue-700 disabled:bg-gray-400"
+        >
+          {state.scanning ? 'Scanning...' : 'Start Scan'}
+        </button>
+      </form>
+
+      {/* Progress bar */}
+      {state.scanning && (
+        <div className="mt-4">
+          <div className="w-full bg-gray-200 rounded">
+            <div
+              className="bg-blue-600 text-xs font-medium text-blue-100 text-center p-0.5 leading-none rounded"
+              style={{ width: `${state.progress}%` }}
+            >
+              {state.progress}%
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Results */}
+      {state.results.length > 0 && (
+        <div className="mt-8">
+          <h2 className="text-xl font-bold mb-4">Results</h2>
+          <div className="space-y-4">
+            {state.results.map((result, index) => (
+              <div key={index} className="p-4 border rounded">
+                <h3 className="font-bold mb-2">{result.repository}</h3>
+                <pre className="bg-gray-100 p-4 rounded overflow-x-auto">
+                  {JSON.stringify(result.data, null, 2)}
+                </pre>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+
+  // Form submission handler
+  const handleSubmit = useCallback(async (e: React.FormEvent) => {
+    e.preventDefault();
+    
+    try {
+      setState(prev => ({ ...prev, isLoading: true, error: null }));
+      
+      // Initialize results
+      const initialResults: ScanResult[] = state.repositories.map(repo => ({
+        repository: repo,
+        dependencies: [],
+        status: 'pending'
+      }));
+      
+      setState(prev => ({ ...prev, results: initialResults }));
+      
+      // Additional form submission logic would go here
+      
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Scan failed';
+      console.error('Scan error:', message);
+      
+      setState(prev => ({
+        ...prev,
+        error: message,
+        results: prev.results.map(result => ({
+          ...result,
+          status: 'error',
+          error: message
+        }))
+      }));
+    } finally {
+      setState(prev => ({ ...prev, isLoading: false }));
+    }
+  }, [state.repositories]);
+
+  // Render JSX
+  return (
+    <div className="p-4">
+      <h1 className="text-2xl font-bold mb-4">Repository Scanner</h1>
+      
+      {state.error && (
+        <div className="bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded mb-4" role="alert">
+          <span className="block sm:inline">{state.error}</span>
+        </div>
+      )}
+
+      <form onSubmit={handleSubmit} className="space-y-4">
+        {state.repositories.map((repo, index) => (
+          <div key={index} className="flex gap-2">
+            <input
+              type="text"
+              value={repo}
+              onChange={(e) => handleRepositoryChange(index, e.target.value)}
+              placeholder="Enter repository URL"
+              className="flex-1 px-3 py-2 border rounded"
+              disabled={state.isLoading}
+            />
+            {index > 0 && (
+              <button
+                type="button"
+                onClick={() => handleRemoveRepository(index)}
+                className="px-3 py-2 text-red-600"
+                disabled={state.isLoading}
+              >
+                Remove
+              </button>
+            )}
+          </div>
+        ))}
+
+        <div className="space-x-4">
+          <button
+            type="button"
+            onClick={handleAddRepository}
+            className="px-4 py-2 text-gray-600 border rounded"
+            disabled={state.isLoading}
+          >
+            Add Repository
+          </button>
+
+          <select
+            value={state.scanType}
+            onChange={(e) => handleScanTypeChange(e.target.value as ScanType)}
+            className="px-4 py-2 border rounded"
+            disabled={state.isLoading}
+          >
+            <option value="full">Full Scan</option>
+            <option value="incremental">Incremental Scan</option>
+          </select>
+
+          <button
+            type="submit"
+            className="px-4 py-2 bg-blue-500 text-white rounded"
+            disabled={state.isLoading}
+          >
+            {state.isLoading ? 'Scanning...' : 'Start Scan'}
+          </button>
+        </div>
+      </form>
+
+      {state.results.length > 0 && (
+        <div className="mt-8">
+          <h2 className="text-xl font-semibold mb-4">Scan Results</h2>
+          <div className="space-y-4">
+            {state.results.map((result) => (
+              <div
+                key={result.repository}
+                className="p-4 border rounded"
+              >
+                <h3 className="font-medium">{result.repository}</h3>
+                <div className="mt-2">
+                  <span className="inline-block px-2 py-1 text-sm rounded">
+                    Status: {result.status}
+                  </span>
+                  {result.status === 'scanning' && state.progressUpdate.repository === result.repository && (
+                    <div className="mt-2">
+                      <div className="text-sm text-gray-600">{state.progressUpdate.step}</div>
+                      <div className="w-full bg-gray-200 rounded h-2 mt-1">
+                        <div
+                          className="bg-blue-500 h-2 rounded"
+                          style={{ width: `${state.progressUpdate.progress}%` }}
+                        />
+                      </div>
+                    </div>
+                  )}
+                  {result.error && (
+                    <p className="mt-2 text-red-600">{result.error}</p>
+                  )}
+                  {result.dependencies.length > 0 && (
+                    <div className="mt-4">
+                      <h4 className="font-medium mb-2">Dependencies</h4>
+                      <ul className="space-y-2">
+                        {result.dependencies.map((dep) => (
+                          <li key={dep.name} className="flex justify-between">
+                            <span>{dep.name}</span>
+                            <span>
+                              {dep.currentVersion} → {dep.latestVersion}
+                            </span>
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+
+// Utility function to get API URL
+const getApiUrl = (): string => {
+  const hostname = window.location.hostname;
+  return hostname.includes('.app.github.dev')
+    ? `https://${hostname.replace('3000', '3001')}`
+    : 'http://localhost:3001';
+};
+
+// Progress handling function
+const handleServerEvent = (
+  event: MessageEvent,
+  setState: React.Dispatch<React.SetStateAction<FormState>>
+) => {
+  try {
+    const data = JSON.parse(event.data) as ServerEvent;
+    
+    if (data.type === 'progress' && data.repository) {
+      setState(prev => ({
+        ...prev,
+        progressUpdate: {
+          repository: data.repository!,
+          step: data.step || '',
+          progress: data.progress || 0
+        },
+        results: prev.results.map(result =>
+          result.repository === data.repository
+            ? { ...result, status: 'scanning' }
+            : result
+        )
+      }));
+    }
+  } catch (err) {
+    console.error('Failed to parse progress data:', err);
+  }
+};
+  }, []);
+
+  // Form submission handler
+  const handleSubmit = useCallback(async (e: React.FormEvent) => {
+    e.preventDefault();
+
+    try {
+      setState(prev => ({ ...prev, isLoading: true, error: null }));
+      const apiUrl = getApiUrl();
+      closeEventSource();
+
+      // Initialize results
+      const initialResults: ScanResult[] = state.repositories.map(repo => ({
+        repository: repo,
+        dependencies: [],
+        status: 'pending'
+      }));
+
+      setState(prev => ({ ...prev, results: initialResults }));
+
+      // Start scan
+      const response = await fetch(`${apiUrl}/api/scan`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({
+          repositories: state.repositories,
+          scanType: state.scanType
+        })
+      });
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        throw new Error(errorText || `HTTP error ${response.status}`);
+      }
+
+          ...prev,
+          error: 'Lost connection to progress updates'
+        }));
+      };
+
+      setEventSource(source);
+
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Scan failed';
+      console.error('Scan error:', message);
+      
+      setState(prev => ({
+        ...prev,
+        error: message,
+        results: prev.results.map(result => ({
+          ...result,
+          status: 'error',
+          error: message
+        }))
+      }));
+    } finally {
+      setState(prev => ({ ...prev, isLoading: false }));
+    }
+  }, [state.repositories, state.scanType, getApiUrl, closeEventSource]);
+
+  // Return JSX
+  return (
+    <div className="p-4">
+      <h1 className="text-2xl font-bold mb-4">Repository Scanner</h1>
+      
+      {state.error && (
+        <div className="bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded mb-4" role="alert">
+          <span className="block sm:inline">{state.error}</span>
+        </div>
+      )}
+
+      <form onSubmit={handleSubmit} className="space-y-4">
+
+  const handleAddRepository = useCallback(() => {
+    setState(prev => ({
+      ...prev,
+      repositories: [...prev.repositories, '']
+    }));
+  }, []);
+
+  const handleRemoveRepository = useCallback((index: number) => {
+    setState(prev => ({
+      ...prev,
+      repositories: prev.repositories.filter((_, i: number) => i !== index)
+    }));
+  }, []);
+
+  const handleScanTypeChange = useCallback((type: ScanType) => {
+    setState(prev => ({
+      ...prev,
+      scanType: type
+    }));
+  }, []);
+
+  // Return JSX
+  return (
+    <div className="p-4">
+      <h1 className="text-2xl font-bold mb-4">Repository Scanner</h1>
+      
+      {state.error && (
+        <div className="bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded mb-4" role="alert">
+          <span className="block sm:inline">{state.error}</span>
+        </div>
+      )}
+
+      <form onSubmit={handleSubmit} className="space-y-4">
+        {state.repositories.map((repo, index) => (
+          <div key={index} className="flex gap-2">
+            <input
+              type="text"
+              value={repo}
+              onChange={(e) => handleRepositoryChange(index, e.target.value)}
+              placeholder="Enter repository URL"
+              className="flex-1 px-3 py-2 border rounded"
+              disabled={state.isLoading}
+            />
+            {index > 0 && (
+              <button
+                type="button"
+                onClick={() => handleRemoveRepository(index)}
+                className="px-3 py-2 text-red-600"
+                disabled={state.isLoading}
+              >
+                Remove
+              </button>
+            )}
+          </div>
+        ))}
+
+        <div className="space-x-4">
+          <button
+            type="button"
+            onClick={handleAddRepository}
+            className="px-4 py-2 text-gray-600 border rounded"
+            disabled={state.isLoading}
+          >
+            Add Repository
+          </button>
+
+          <select
+            value={state.scanType}
+            onChange={(e) => handleScanTypeChange(e.target.value as ScanType)}
+            className="px-4 py-2 border rounded"
+            disabled={state.isLoading}
+          >
+            <option value="full">Full Scan</option>
+            <option value="incremental">Incremental Scan</option>
+          </select>
+
+          <button
+            type="submit"
+            className="px-4 py-2 bg-blue-500 text-white rounded"
+            disabled={state.isLoading}
+          >
+            {state.isLoading ? 'Scanning...' : 'Start Scan'}
+          </button>
+        </div>
+      </form>
+
+      {state.results.length > 0 && (
+        <div className="mt-8">
+          <h2 className="text-xl font-semibold mb-4">Scan Results</h2>
+          <div className="space-y-4">
+            {state.results.map((result) => (
+              <div
+                key={result.repository}
+                className="p-4 border rounded"
+              >
+                <h3 className="font-medium">{result.repository}</h3>
+                <div className="mt-2">
+                  <span className="inline-block px-2 py-1 text-sm rounded">
+                    Status: {result.status}
+                  </span>
+                  {result.status === 'scanning' && state.progressUpdate.repository === result.repository && (
+                    <div className="mt-2">
+                      <div className="text-sm text-gray-600">{state.progressUpdate.step}</div>
+                      <div className="w-full bg-gray-200 rounded h-2 mt-1">
+                        <div
+  // Return JSX
+  return (
+    <div className="p-4">
+      <h1 className="text-2xl font-bold mb-4">Repository Scanner</h1>
+      
+      {state.error && (
+        <div className="bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded mb-4" role="alert">
+          <span className="block sm:inline">{state.error}</span>
+        </div>
+      )}
+
+      <form onSubmit={handleSubmit} className="space-y-4">
+
+  const addRepository = () => {
+    setRepositories([...repositories, '']);
+  };
+
+  const removeRepository = (index: number) => {
+    setRepositories(repositories.filter((_, i) => i !== index));
+  };
+
+  const updateRepository = (index: number, value: string) => {
+    const newRepositories = [...repositories];
+    newRepositories[index] = value;
+    setRepositories(newRepositories);
+  };
+
+  // Get the API URL based on the current environment
+  const getApiUrl = useCallback((): string => {
+    const currentUrl = window.location.hostname;
+    const isCodespaces = currentUrl.includes('.app.github.dev');
+    return isCodespaces
+      ? `https://${currentUrl.replace('3000', '3001')}`
+      : 'http://localhost:3001';
+  }, []);
+
+  // Handle form submission
+  const handleSubmit = useCallback(async (e: React.FormEvent) => {
+    e.preventDefault();
+    
+    const apiUrl = getApiUrl();
+    let eventSource: EventSource | undefined;
+
+    const cleanup = () => {
+      if (eventSource) {
+        eventSource.close();
+        eventSource = undefined;
+      }
+    };
+
+    try {
+      setIsLoading(true);
+      setError(null);
+
+      // Initialize results
+      const initialResults: ScanResult[] = repositories.map(repo => ({
+        repository: repo,
+        dependencies: [],
+        status: 'pending'
+      }));
+      setResults(initialResults);
+
+      // Start the scan
+      const scanResponse = await fetch(`${apiUrl}/api/scan`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({ repositories, scanType })
+      });
+
+      if (!scanResponse.ok) {
+        const errorData = await scanResponse.json().catch(() => ({ message: 'Scan failed' }));
+        throw new Error(errorData.message || `HTTP error ${scanResponse.status}`);
+      }
+
+      // Set up progress monitoring
+      eventSource = new EventSource(`${apiUrl}/api/scan/progress`, {
+        withCredentials: true
+      });
+
+      // Handle progress updates
+      eventSource.onmessage = (event) => {
+        try {
+          const update = JSON.parse(event.data) as ProgressUpdate;
+          
+          if (update.type === 'progress' && update.repository) {
+            // Update progress indicator
+            setCurrentScanProgress({
+              repository: update.repository,
+              step: update.step || '',
+              progress: update.progress || 0
+            });
+
+            // Update scan status
+            setResults(prev => 
+              prev.map(result => 
+                result.repository === update.repository 
+                  ? { ...result, status: 'scanning' } 
+                  : result
+              )
+            );
+          }
+        } catch (err) {
+          console.error('Error processing progress update:', err);
+        }
+      };
+
+      // Handle connection errors
+      eventSource.onerror = () => {
+        cleanup();
+        setError('Lost connection to progress updates');
+      };
+
+    } catch (err) {
+      const errorMessage = err instanceof Error ? err.message : 'Unknown error occurred';
+      console.error('Scan error:', errorMessage);
+      setError(errorMessage);
+      
+      // Update all results to error state
+      setResults(prev => 
+        prev.map(result => ({
+          ...result,
+          status: 'error',
+          error: errorMessage
+        }))
+      );
+
+    } finally {
+      setIsLoading(false);
+      cleanup();
+    }
+  }, [repositories, scanType, getApiUrl]);
+    
+    try {
+      // Set up server-sent events listener for progress updates
+      let eventSource: EventSource;
+      let retryCount = 0;
+      const maxRetries = 3;
+      const retryDelay = 1000;
+}
